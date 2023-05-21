@@ -73,8 +73,11 @@ def getKey() :
     txt = response.text
     txt = txt.split("\n")
     links = list()
-    #print(len(txt))
-    txt = txt[1]
+    #print(txt, len(txt))
+    for i in range(0, len(txt)) :
+        if "If you're" in txt[i] :
+            txt = txt[i]
+
     txt = txt.split(" ")
     for i in range(0, len(txt)) :
         if 'main' in txt[i] and 'src' in txt[i] :
@@ -83,7 +86,6 @@ def getKey() :
     for i in range(0,len(links)) :
         links[i] = links[i].replace('src="', '')
         links[i] = links[i].replace('"','')
-
 
     for i in range(0, len(links)) :
         URL = 'http://papago.naver.com' + links[i]
@@ -110,4 +112,5 @@ def getKey() :
 
 
 if __name__ == "__main__" :
-    print(Trans("hello it's me mario", "en", "ko", getKey()))
+    string = str(input())
+    print(Trans(string, "ko", "en", getKey()))
