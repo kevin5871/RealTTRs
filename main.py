@@ -122,7 +122,7 @@ def mainGUI() :
     #root.attributes('-disabled', True)
     root.geometry('400x400')
     Label(root, text="RealTTRs", font=('Arial',25)).place(x=10, y=10)
-    Label(root, text="v 1.0.0", font=('Arial', 10)).place(x=340,y=375)
+    Label(root, text="v 1.0.1", font=('Arial', 10)).place(x=340,y=375)
     Label(root, text="▶ Functions", font=('Arial', 10)).place(x=10, y=70)
     Button(root, text="Edit Area", command=lambda:capGUI()).place(x=50, y=100)
     Button(root, text="ScreenShot Test", command=lambda:Screenshot_Test()).place(x=230, y=100)
