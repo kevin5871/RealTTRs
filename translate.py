@@ -92,13 +92,12 @@ def getKey() :
         response = requests.get(URL)
         txt = response.text
         logging.info(URL)
-        if 'AUTH_KEY' in str(txt) :
+        
+        if 'Authorization' in str(txt) :
             txt = txt.split(',')
             for i in range(0, len(txt)) :
-                    if 'AUTH_KEY' in str(txt[i]) :
-                        #print(txt[i])
-                        keyst = txt[i].split('"')
-                        #print(keyst)
+                    if 'Authorization' in str(txt[i]) :
+                        keyst = txt[i+1].split('"')
                         for j in range(0, len(keyst)) :
                             if 'v' in keyst[j] :
                                 key = keyst[j]

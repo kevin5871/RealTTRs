@@ -1,16 +1,14 @@
 import translate
 import ocr
 import os
-import sys
 import pyautogui
 import tempfile
-import time
 import cv2
 import logging
+import ctypes
 from tkinter import *
 from tkinter import messagebox
 from PIL import Image, ImageTk
-import textwrap
 import requests
 from bs4 import BeautifulSoup
 
@@ -24,7 +22,10 @@ px, py = None, None
 
 startlang = 'Original Language'
 targetlang = 'Translated Language'
-duration = 1
+duration = 100
+
+class TemporaryError(Exception) :
+    pass
 
 def supportLang() :
     webpage = requests.get('https://www.jaided.ai/easyocr/')
@@ -96,19 +97,6 @@ def print_button_pressed() :
     py = root4.winfo_rooty()
     root4.destroy()
 
-def printUI() :
-    global root4
-    root4 = Toplevel()
-    root4.title("Output Management")
-    #root1.attributes('-topmost', 'true')
-    root4.attributes('-alpha', 0.8)
-    #root1.wm_attributes('-fullscreen','true')
-    #root1.overrideredirect(1)
-    root4.geometry('300x200')
-    Label(root4, text="(OUTPUT STARTS FROM HERE)").place(x=10,y=10)
-    Label(root4, text="Place where you want to get an output").place(x=10, y=50)
-    button1 = Button(root4, text="OK", command=lambda:print_button_pressed()). place(x=10, y=75)
-    root4.mainloop()
 
 def close() :
     global td, root
@@ -122,11 +110,10 @@ def mainGUI() :
     #root.attributes('-disabled', True)
     root.geometry('400x400')
     Label(root, text="RealTTRs", font=('Arial',25)).place(x=10, y=10)
-    Label(root, text="v 1.0.1", font=('Arial', 10)).place(x=340,y=375)
+    Label(root, text="v 1.1", font=('Arial', 10)).place(x=350,y=375)
     Label(root, text="▶ Functions", font=('Arial', 10)).place(x=10, y=70)
-    Button(root, text="Edit Area", command=lambda:capGUI()).place(x=50, y=100)
-    Button(root, text="ScreenShot Test", command=lambda:Screenshot_Test()).place(x=230, y=100)
-    Button(root, text="Edit Print", command=lambda:printUI()).place(x=140, y=100)
+    Button(root, text="Edit Area", command=lambda:capGUI()).place(x=50, y=100, width=150)
+    Button(root, text="ScreenShot Test", command=lambda:Screenshot_Test()).place(x=220, y=100, width=150)
     Label(root, text="▶ Options", font=('Arial', 10)).place(x=10, y=150)
     Label(root, text="Language", font=('Arial',10)).place(x=30,y=180)
     #E1 = Entry(root)
@@ -135,24 +122,24 @@ def mainGUI() :
     supportlang = supportLang()[1]
     supportlangcode = supportLang()[0]
     E1 = StringVar()
-    E1.set("Original Language")
+    E1.set("English")
     OptionMenu(root, E1, *supportlang).place(x=30,y=210,width=175)
     #Label(root, text="to", font=('Arial', 10)).place(x=175, y=210)
     #E2 = Entry(root)
     #E2.insert(0, 'ko')
     #E2.place(x=200,y=210,width=50)
     E2 = StringVar()
-    E2.set("Translated Language")
+    E2.set("Korean")
     translangcode=['ko', 'en', 'ja', 'zh-CN', 'zh-TW', 'es', 'fr', 'de', 'ru', 'pt', 'it', 'vi', 'th', 'id', 'hi']
     translang=['Korean', 'English', 'Japanese', 'Chinese(Simpilfied)', 'Chinese(Traditional)','Spanish', 'France', 'German', 'Russian','Pourtuguese', 'Italian', 'Vietnamese', 'Thai','Indonesian','Hindian']
     OptionMenu(root, E2, *translang).place(x=30,y=250,width=200)
-    Label(root, text="Refresh Duration (sec)", font=('Arial',10)).place(x=30,y=300,width=175)
+    Label(root, text="Refresh Duration (ms)", font=('Arial',10)).place(x=30,y=300,width=175)
     E3 = Entry(root)
-    E3.insert(0, '1')
+    E3.insert(0, '100')
     E3.place(x=210,y=300,width=30)
-    Button(root, text="Start", command=lambda:StartUI()).place(x=25,y=330,width=150)
-    Button(root, text="Stop", command=lambda:UIEnd()).place(x=180,y=330,width=95)
-    Button(root, text="Apply", command=lambda:applysettings()).place(x=280,y=330,width=95)
+    Button(root, text="Start", command=lambda:StartUI()).place(x=25,y=330,width=250, height=30)
+    Button(root, text="Stop", command=lambda:UIEnd()).place(x=280,y=330,width=95, height=30)
+    Button(root, text="Apply", command=lambda:applysettings()).place(x=280,y=210,width=95, height=75)
     root.protocol("WM_DELETE_WINDOW", close)
     root.resizable(False, False)
     root.mainloop()
@@ -188,12 +175,61 @@ def Screenshot_Test() :
     #root2.mainloop()
 
 def UIEnd() :
-    global flag, root3
-    flag = 0
+    global root3
     root3.destroy()
 
+def hide_overlay() :
+    global root3
+    root3.withdraw()
+    show_overlay()
+
+def show_overlay() :
+    global root3,  td, path, startlang, labellist, lx, ly, rx, ry, duration
+    hide_job = None
+    try :
+        pyautogui.screenshot(os.path.join(path, 'screen.png'),region=(lx, ly, abs(rx-lx), abs(ry-ly)))
+
+        root3.deiconify()
+        for i in labellist :
+            i.destroy()
+        del labellist[:]
+            
+        image(os.path.join(path, 'screen.png'), os.path.join(path, 'gray.png'))
+        rectext = ocr.ImagetoTxt(td, os.path.join(path, 'gray.png'), langCode=startlang)[0]
+        text = "\n".join(ocr.ImagetoTxt(td, os.path.join(path, 'gray.png'), langCode=startlang)[1])
+        
+        if len(rectext) != 0 :
+
+            translated = translate.Trans(text, startlang, targetlang, translate.getKey()).split('\n')
+            translated = list(filter(None, translated))
+            
+            if(len(rectext) != len(translated)) :
+                raise TemporaryError()
+
+            
+            for i in range(0, len(rectext)) :
+                labellist.append(Label(root3, text=translated[i], font=('Arial', 10)))
+                labellist[-1].place(x=lx+rectext[i][0][0][0], y=ly+rectext[i][0][0][1])
+            
+        
+        root3.update()
+        if hide_job is not None:
+            root3.after_cancel(hide_job)
+        
+        hide_job = root3.after(duration, lambda: hide_overlay())
+        
+    except TemporaryError:
+        messagebox.showerror("Error", "Temporary Error Occurred. Please Try Again.")
+        logging.error("Temporary Error : OCR and Translated Text Length Mismatch. OCR Result : %s, Translated Result : %s"%(rectext.replace('\n', '(newline)'), translated).replace('\n', '(newline)'))
+        logging.error("%s, %s"%(len(rectext), len(translated)))
+        
+    except Exception as e:
+        messagebox.showerror("Error", "Unknown Error Appeared. Please Check the Log : %s"%os.path.abspath('SCTransLog.log'))
+        logging.error('Main Process Error : %s'% e)
+
+
 def StartUI() :
-    global lx, ly, rx, ry, rep, td, path, startlang, targetlang, flag, root3, px, py
+    global lx, ly, rx, ry, rep, td, path, startlang, targetlang, root3, px, py, labellist
     if lx == None and ly == None and rx == None and ry == None :
             messagebox.showerror("Error!", "You must Set Area before start.")
             return
@@ -205,60 +241,22 @@ def StartUI() :
         return
     key = translate.getKey()
     flag = 1
-    if px == None :
-        px = lx
-    if py == None :
-        py = ly
+    labellist = list()
+
     root3 = Toplevel()
-    #print(+'x'+str(abs(ry-ly))+'+'+str(lx)+'+'+str(ly))
-    root3.geometry(str(10000)+'x'+str(10000)+'+'+str(px)+'+'+str(py))
     root3.overrideredirect(1)
     root3.configure(bg='#ffffff')
-    root3.attributes('-alpha',0.8)
     root3.wm_attributes('-transparentcolor','#ffffff')
+    root3.attributes('-alpha',0.8)
     root3.attributes('-topmost', 'true')
-    ocrtext = StringVar(value="OCR Text")
-    transtext = StringVar(value="Translated Text")
-    TransLabel = Label(root3, textvariable=transtext, font=('Arial', 20))
-    TransLabel.place(x=10,y=10)
-    OCRLabel = Label(root3, textvariable=ocrtext, font=('Arial', 10))
-    OCRLabel.place(x=10,y=50)
-    #t = threading.Thread(target=mouse)
-    #t.start()
-    while flag :
-        try :
-            root3.withdraw()
-
-            pyautogui.screenshot(os.path.join(path, 'screen.png'),region=(lx, ly, abs(rx-lx), abs(ry-ly)))
-            image(os.path.join(path, 'screen.png'), os.path.join(path, 'gray.png'))
-            rectext = ocr.ImagetoTxt(td, os.path.join(path, 'gray.png'), langCode=startlang)
-            if(len(rectext) == 0) :
-                rectext = "(No Texts Detected.)"
-            ocrtextval = rectext.replace('\n', ' | ')
-            ocrtext.set(textwrap.fill(ocrtextval, width=150))
-            #ocrtext.set(rectext)
-            transtextval = translate.Trans(rectext, startlang, targetlang, key).replace('\n', ' | ')
-            #print(len(transtextval))
-            transtext.set(textwrap.fill(transtextval, width=50))
-            #transtext.set(textwrap.fill(translate.Trans(rectext, startlang, targetlang, key).replace('\n', ' | ')), width=80)
-            #transtext.set(translate.Trans(rectext, startlang, targetlang, key))
-            root3.deiconify()
-            root3.update_idletasks()
-            #root3.update()
-            OCRLabel.place(x=10,y=10+int(TransLabel.winfo_height()))
-            root3.update_idletasks()
-            root3.update()
-
-            #t.do_run = False  
-            #t.join()      
-            time.sleep(duration)
-        except Exception as e:
-            messagebox.showerror("Error", "Unknown Error Appeared. Please Check the Log : %s"%os.path.abspath('SCTransLog.log'))
-            logging.error('Main Process Error : %s'% e)
-            break
-    #root3.mainloop()
-    #t.do_run = False  
-    #t.join()
+    root3.geometry('1920x1080+0+0')
+    hwnd = ctypes.windll.user32.GetParent(root3.winfo_id())
+    
+    styles = ctypes.windll.user32.GetWindowLongW(hwnd, -20)
+    styles = styles | 0x80000 | 0x20
+    ctypes.windll.user32.SetWindowLongW(hwnd, -20, styles)
+    
+    show_overlay()
 
 #init()
 mainGUI()
