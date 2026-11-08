@@ -6,13 +6,26 @@ import tempfile
 import cv2
 import logging
 import ctypes
+import time
+import numpy
 from tkinter import *
 from tkinter import messagebox
 from PIL import Image, ImageTk
 import requests
 from bs4 import BeautifulSoup
 
-logging.basicConfig(filename='RealTTRsLog.log', level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+
+logging.basicConfig(
+    filename="RealTTRsLog.log",
+    level=logging.INFO,
+    format=(
+        "%(asctime)s - %(name)s - "
+        "%(levelname)s - %(message)s"
+    ),
+    encoding="utf-8",
+    errors="backslashreplace"
+)
+
 td = tempfile.TemporaryDirectory()
 path = td.name
 
@@ -22,7 +35,29 @@ px, py = None, None
 
 startlang = 'Original Language'
 targetlang = 'Translated Language'
-duration = 100
+duration = 150
+
+overlay_running = False
+overlay_after_id = None
+
+previous_frame = None
+CHANGE_THRESHOLD = 3.0 # 민감도
+
+WDA_EXCLUDE_FROM_CAPTURE = 0x00000011
+
+def exclude_window_from_capture(window):
+    window.update_idletasks()
+    
+    hwnd = ctypes.windll.user32.GetParent(window.winfo_id())
+    if not hwnd:
+        hwnd = window.winfo_id()
+        
+    result = ctypes.windll.user32.SetWindowDisplayAffinity(hwnd, WDA_EXCLUDE_FROM_CAPTURE)
+    if not result:
+        logging.warning("Failed to set window display affinity. Error code: %d", ctypes.windll.kernel32.GetLastError())
+    
+    return bool(result)
+
 
 class TemporaryError(Exception) :
     pass
@@ -100,6 +135,7 @@ def print_button_pressed() :
 
 def close() :
     global td, root
+    UIEnd()
     td.cleanup()
     root.destroy()
 
@@ -148,8 +184,31 @@ def image(image, target) :
     image1 = cv2.imread(image)
     imagegray = cv2.cvtColor(image1, cv2.COLOR_BGR2GRAY)
     imagethresh = cv2.threshold(imagegray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)[1]
-    #print(imagethresh, type(imagethreshE1 = Entry(top, bd =5)))
     cv2.imwrite(target,imagethresh)
+
+
+def has_screen_changed(current_frame):
+    global previous_frame
+
+    if previous_frame is None:
+        previous_frame = current_frame.copy()
+        return True, 0.0
+
+    if previous_frame.shape != current_frame.shape:
+        previous_frame = current_frame.copy()
+        return True, 0.0
+
+    diff = cv2.absdiff(previous_frame, current_frame)
+
+    # 평균 픽셀 차이
+    score = float(numpy.mean(diff))
+
+    if score > CHANGE_THRESHOLD:
+        previous_frame = current_frame.copy()
+        return True, score
+
+    return False, score
+
 
 def is_clicked(x, y, button, pressed):
     global pos
@@ -174,89 +233,288 @@ def Screenshot_Test() :
     root2.resizable(False,False)
     #root2.mainloop()
 
-def UIEnd() :
-    global root3
-    root3.destroy()
+
+def UIEnd():
+    global overlay_running, overlay_after_id
+    global previous_frame
+
+    # 먼저 반복 실행 중단
+    overlay_running = False
+
+    # 예약된 콜백 취소
+    if overlay_after_id is not None:
+        try:
+            root.after_cancel(overlay_after_id)
+        except TclError:
+            pass
+
+        overlay_after_id = None
+
+    previous_frame = None
+
+    # 오버레이 창 제거
+    if "root3" in globals():
+        try:
+            if root3.winfo_exists():
+                root3.destroy()
+        except TclError:
+            pass
+
+    logging.info("Overlay stopped")
+
 
 def hide_overlay() :
     global root3
-    root3.withdraw()
-    show_overlay()
-
-def show_overlay() :
-    global root3,  td, path, startlang, labellist, lx, ly, rx, ry, duration
-    hide_job = None
-    try :
-        pyautogui.screenshot(os.path.join(path, 'screen.png'),region=(lx, ly, abs(rx-lx), abs(ry-ly)))
-
-        root3.deiconify()
-        for i in labellist :
-            i.destroy()
-        del labellist[:]
-            
-        image(os.path.join(path, 'screen.png'), os.path.join(path, 'gray.png'))
-        rectext = ocr.ImagetoTxt(td, os.path.join(path, 'gray.png'), langCode=startlang)[0]
-        text = "\n".join(ocr.ImagetoTxt(td, os.path.join(path, 'gray.png'), langCode=startlang)[1])
-        
-        if len(rectext) != 0 :
-
-            translated = translate.Trans(text, startlang, targetlang, translate.getKey()).split('\n')
-            translated = list(filter(None, translated))
-            
-            if(len(rectext) != len(translated)) :
-                raise TemporaryError()
-
-            
-            for i in range(0, len(rectext)) :
-                labellist.append(Label(root3, text=translated[i], font=('Arial', 10)))
-                labellist[-1].place(x=lx+rectext[i][0][0][0], y=ly+rectext[i][0][0][1])
-            
-        
-        root3.update()
-        if hide_job is not None:
-            root3.after_cancel(hide_job)
-        
-        hide_job = root3.after(duration, lambda: hide_overlay())
-        
-    except TemporaryError:
-        messagebox.showerror("Error", "Temporary Error Occurred. Please Try Again.")
-        logging.error("Temporary Error : OCR and Translated Text Length Mismatch. OCR Result : %s, Translated Result : %s"%(rectext.replace('\n', '(newline)'), translated).replace('\n', '(newline)'))
-        logging.error("%s, %s"%(len(rectext), len(translated)))
-        
-    except Exception as e:
-        messagebox.showerror("Error", "Unknown Error Appeared. Please Check the Log : %s"%os.path.abspath('SCTransLog.log'))
-        logging.error('Main Process Error : %s'% e)
+    if root3.winfo_exists():
+        show_overlay()
 
 
-def StartUI() :
-    global lx, ly, rx, ry, rep, td, path, startlang, targetlang, root3, px, py, labellist
-    if lx == None and ly == None and rx == None and ry == None :
-            messagebox.showerror("Error!", "You must Set Area before start.")
+
+
+def schedule_next_capture():
+    global overlay_after_id
+
+    if not overlay_running:
+        return
+
+    if not root3.winfo_exists():
+        return
+
+    # 중복 예약 방지
+    if overlay_after_id is not None:
+        return
+
+    overlay_after_id = root3.after(
+        max(150, duration),
+        capture_loop
+    )
+
+
+def capture_loop():
+    global overlay_after_id
+
+    overlay_after_id = None
+
+    if not overlay_running:
+        return
+
+    try:
+        show_overlay()
+
+    except Exception:
+        logging.exception(
+            "Capture loop error"
+        )
+
+    finally:
+        if overlay_running:
+            schedule_next_capture()
+
+
+
+def show_overlay():
+    global root3, td, path
+    global startlang, targetlang, labellist
+    global lx, ly, rx, ry
+    global overlay_running
+
+    if not overlay_running:
+        return
+
+    if not root3.winfo_exists():
+        return
+
+    start_total = time.perf_counter()
+
+    try:
+        screenshot = pyautogui.screenshot(region=(lx, ly, abs(rx - lx), abs(ry - ly)))
+        frame = cv2.cvtColor(numpy.array(screenshot), cv2.COLOR_RGB2GRAY)
+
+        changed, score = has_screen_changed(frame)
+
+        if not changed:
+            logging.info(
+                "Screen unchanged (%.2f), OCR skipped",
+                score
+            )
             return
-    if E1.get() == "Original Language" :
-        messagebox.showerror("Error", "Select Original Language.")
-        return
-    elif E2.get() == "Translated Language" :
-        messagebox.showerror("Error", "Select Translated Language.")
-        return
-    key = translate.getKey()
-    flag = 1
-    labellist = list()
 
-    root3 = Toplevel()
-    root3.overrideredirect(1)
-    root3.configure(bg='#ffffff')
-    root3.wm_attributes('-transparentcolor','#ffffff')
-    root3.attributes('-alpha',0.8)
-    root3.attributes('-topmost', 'true')
-    root3.geometry('1920x1080+0+0')
-    hwnd = ctypes.windll.user32.GetParent(root3.winfo_id())
-    
-    styles = ctypes.windll.user32.GetWindowLongW(hwnd, -20)
-    styles = styles | 0x80000 | 0x20
-    ctypes.windll.user32.SetWindowLongW(hwnd, -20, styles)
-    
-    show_overlay()
+        logging.info(
+            "Screen changed: %.2f",
+            score
+        )
+
+        gray = cv2.threshold(frame, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)[1]
+        
+        gray_path = os.path.join(path, "gray.png")
+
+        if not cv2.imwrite(gray_path, gray):
+            raise RuntimeError(
+                "Failed to save OCR image"
+            )
+
+        rectext, texts = ocr.ImagetoTxt(
+            td,
+            gray_path,
+            langCode=startlang
+        )
+        logging.info("OCR raw texts: %r", texts)
+        
+        if not rectext:
+            for label in labellist: label.destroy()
+            labellist.clear()
+
+            logging.info(
+                "No text detected, overlay cleared"
+            )
+            return
+
+        translated_text = translate.Trans(
+            "\n".join(texts),
+            startlang,
+            targetlang
+        )
+
+        logging.info(
+            "Translation raw: %r",
+            translated_text
+        )
+
+        translated = translated_text.split("\n")
+
+        if len(rectext) != len(translated):
+            logging.warning(
+                "OCR count (%d) != Translation count (%d)",
+                len(rectext),
+                len(translated)
+            )
+
+            return
+
+        for label in labellist: label.destroy()
+        labellist.clear()
+
+        for i, item in enumerate(rectext):
+            x, y = lx + int(item[0][0][0]), ly + int(item[0][0][1])
+            label = Label(root3, text=translated[i], font=("Arial", 10))
+            label.place(x=x, y=y)
+            labellist.append(label)
+
+        elapsed = (time.perf_counter() - start_total) * 1000
+
+        logging.info(
+            "Total processing: %.2f ms",
+            elapsed
+        )
+
+    except Exception:
+        logging.exception(
+            "Overlay processing error"
+        )
+
+
+
+
+
+def StartUI():
+    global root3, labellist, previous_frame
+    global overlay_running, overlay_after_id
+    global lx, ly, rx, ry
+
+    # 중복 실행 방지
+    if overlay_running:
+        logging.info("Overlay is already running")
+        return
+
+    # 캡처 영역 확인
+    if None in (lx, ly, rx, ry):
+        messagebox.showerror(
+            "Error",
+            "You must Set Area before start."
+        )
+        return
+
+    if rx <= lx or ry <= ly:
+        messagebox.showerror(
+            "Error",
+            "Invalid capture area."
+        )
+        return
+
+    # 언어 설정 확인
+    if startlang == "Original Language":
+        messagebox.showerror(
+            "Error",
+            "Apply language settings first."
+        )
+        return
+
+    if targetlang == "Translated Language":
+        messagebox.showerror(
+            "Error",
+            "Apply language settings first."
+        )
+        return
+
+    previous_frame = None
+    overlay_after_id = None
+    labellist = []
+
+    # 오버레이 창 생성
+    root3 = Toplevel(root)
+    root3.overrideredirect(True)
+    root3.configure(bg="#ffffff")
+    root3.wm_attributes(
+        "-transparentcolor", "#ffffff"
+    )
+    root3.attributes("-alpha", 0.8)
+    root3.attributes("-topmost", True)
+    root3.geometry("1920x1080+0+0")
+
+    root3.update_idletasks()
+
+    # 마우스 클릭 통과 설정
+    hwnd = ctypes.windll.user32.GetParent(
+        root3.winfo_id()
+    )
+
+    if not hwnd:
+        hwnd = root3.winfo_id()
+
+    GWL_EXSTYLE = -20
+    WS_EX_LAYERED = 0x00080000
+    WS_EX_TRANSPARENT = 0x00000020
+
+    styles = ctypes.windll.user32.GetWindowLongW(
+        hwnd, GWL_EXSTYLE
+    )
+
+    ctypes.windll.user32.SetWindowLongW(
+        hwnd,
+        GWL_EXSTYLE,
+        styles | WS_EX_LAYERED | WS_EX_TRANSPARENT
+    )
+
+    # 화면 캡처에서 오버레이 제외
+    if not exclude_window_from_capture(root3):
+        logging.error(
+            "Overlay capture exclusion failed"
+        )
+        root3.destroy()
+        messagebox.showerror(
+            "Error",
+            "Cannot exclude overlay from capture."
+        )
+        return
+
+    # 실행 상태 활성화
+    overlay_running = True
+
+    logging.info("Overlay started")
+
+    # 반복 실행 시작
+    schedule_next_capture()
+
 
 #init()
 mainGUI()
